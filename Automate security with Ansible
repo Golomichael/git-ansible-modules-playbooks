@@ -1,0 +1,69 @@
+Automating Security Compliance with Ansible: DevSecOps Made Easy
+
+Facing the Challenge of Compliance
+
+We are currently building a product for clients at the Department of Defense. Understandably, their application security requirements are particularly stringent. We had reached the stage in our project where we were ready to deploy to production and begin testing. The catch – we needed to pass a security audit first. Specifically, we needed to ensure our application complied with the Defense Information Systems Agency’s Security Technical Implementation Guides – the DISA STIG.
+
+This felt daunting, in part because the guides have thousands of pages of documentation. Achieving compliance represented potentially hundreds of changes to harden our infrastructure. Adding to the challenge, we decided to timebox our compliance efforts to two weeks with our full team to avoid taking too much time from our ambitious product roadmap. Amazingly, we achieved our goal. Automation was key.
+
+Our client asked us to harden our systems and pass the audit because it’s a matter of national security. However, you don’t have to be part of the government or a regulated industry like banking or healthcare to need a secure system. If your organization manages its own servers, either on-prem or in the cloud, you need to care about server security. You may not have large, dedicated in-house teams of security experts, but our experience shows that security can be achieved by a few engineers practicing DevSecOps in a few weeks.
+
+In this post, I’ll describe how to use the open-source OpenSCAP scanning toolkit in combination with the server configuration tool Ansible to automate the deployment of a DISA-compliant web server. I’ll end with our takeaways in terms of confidence (we got approval to test) and time savings, and explain why using the automation process I describe next can be valuable to any organization that manages its own IT systems.
+
+ Path to Compliance: Identify, Repair, Test
+
+We had two major tasks to complete in two weeks: identify any violations of security standards in our current infrastructure, then fix them. The DISA STIGs cover all levels of the IT stack. This post focuses on web and application servers where, thanks to Ansible, we were able to leverage automation for nearly all the fixes we needed to make.
+
+First Step: Identify Issues
+
+We used the oscap tool on our servers to identify vulnerabilities in our existing configuration. This is a NIST-validated, open-source implementation of the scanning tool that our auditors would be using to perform their audit. With the oscap tool installed on our staging servers, we ran the scan with the appropriate profiles for our agency and use cases:
+
+```sh
+$ oscap xccdf eval --profile xccdf_org.ssgproject.content_profile_stig-rhel7-disa
+```
+
+The oscap tool generates reports of all the compliance requirements your system meets along with a CCE identifier. The below is an example:
+
+Title: Uninstall rsh-server Package  
+Rule: xccdf_org.ssgproject.content_rule_package_rsh-server_removed  
+Ident: CCE-27342-5  
+Result: fail  
+
+The CCE identifier has corresponding documentation for each rule. These docs include technical information on how to configure your servers to fix the flagged violation. OSCAP also has profiles for PCI, HIPAA, and other regulatory frameworks. Since the tool is open source, it is available for use by anyone who handles data in these categories – not just government agencies or their contractors.
+
+Second Step: Generate and Apply Fixes
+
+Now that we had our scan results, we had to turn all of our “fail” results into passing ones by updating our server configuration.
+
+AWS GovCloud hosts our application infrastructure. Our provisioning pipeline is fully automated. We use Ansible, Packer, and Terraform to provision stateless servers. This meant that we would be using Ansible playbooks to deploy all of our security fixes using infrastructure as code. Even with Ansible, implementing the hundreds of configuration items seemed time-consuming. We would have to refer to the documentation for each guideline, extract the requested configuration commands, and write that code into our playbooks. Fortunately, it wasn’t that hard. The OSCAP scanning tool has an incredible integration with Ansible that will generate all of the necessary configuration code with a single command.
+
+Following the documentation, we generated Ansible playbooks that provision compliant Linux boxes and added them to the rest of our Ansible code. We then pushed these changes to our staging servers. Next, we verified that our application still worked correctly after making these hundreds of configuration changes. A few of the changes we made for compliance did not work well with the GovCloud architecture. Ansible playbooks map compliance items to single tasks, so we were able to roll back these changes in a granular way.
+
+Here’s an example: 
+
+```yaml
+- name: Ensure rsh-server is removed
+  package:
+    name: rsh-server
+    state: absent
+  tags:
+    - package_rsh-server_removed
+    - high_severity
+    - disable_strategy
+    - low_complexity
+    - low_disruption
+    - CCE-27342-5
+    - NIST-800-53-AC-17(8)
+    - NIST-800-53-CM-7(a)
+    - DISA-STIG-RHEL-07-020000
+```
+
+Note how the tags reference guidelines related to the task for easy reference! It is easy to find documentation, which informs us that “The rsh-server service provides unencrypted remote access service which does not provide for the confidentiality and integrity of user passwords or the remote session and has very weak authentication.” Not only is it effortless to deploy required changes with this strategy, it is effortless to understand them as well.
+
+ Outcome and Takeaways
+
+After our automated fix generation process was complete, we identified about 70 additional fixes that code generation didn’t cover. The majority of these fixes were line-item configs in a single file. At the end of our two-week timebox, less than a dozen additional sysops tasks remained. This was a vast improvement over the scope of the original work – verifying and remediating over 1,000 compliance items manually!
+
+Your team can adopt these security practices to improve security for any website, whether the law requires it or not. If your team doesn’t have a fleet of security professionals on staff, using DevSecOps tooling like Ansible and OSCAP means that secure systems are still within your reach.
+
+Infrastructure automation undoubtedly has initial setup costs. We feel the investment is well worth it in terms of reliable, easy-to-update systems and developer productivity. What we found in our compliance journey is that infrastructure automation is also worth that investment in terms of security. It transforms implementing a secure system from a Sisyphean task into low-hanging fruit for your SysOps team.
